@@ -5,6 +5,9 @@
 
 ## 特長
 
+- **統一インターフェース (WebSearch クラス):**  
+  複数の検索エンジンAPIを一元管理し、統一されたインターフェースで利用可能
+
 - **Google Custom Search API Wrapper:**  
   キーワード検索結果（タイトル、URL、抜粋、メタデータ等）の取得
 
@@ -64,6 +67,9 @@
   ├── bing_web_search.py      # Bing Web Search API用ラッパー
   ├── duckduckgo_instant_answer.py  # DuckDuckGo Instant Answer API用ラッパー
   ├── examples/               # 各API動作検証用のサンプルスクリプト
+  │   ├── src/
+  │   │   ├── web_search.py   # 統一インターフェースクラス
+  │   │   └── example_usage.py # WebSearchクラスの使用例
   │   ├── google_example.py
   │   ├── bing_example.py
   │   └── duckduckgo_example.py
@@ -74,17 +80,58 @@
   ```
 
 ## 使用例
-### Google Custom Search API の例
+
+### WebSearch クラスの使用例
+WebSearchクラスは、複数の検索エンジンAPIを統一されたインターフェースで利用するための機能を提供します。
+
+```python
+from web_search import WebSearch
+
+# WebSearchインスタンスの作成（デフォルトエンジンを指定）
+web_search = WebSearch(default_engine="google")
+
+# 利用可能な検索エンジンの確認
+available_engines = web_search.available_engines()
+print(f"利用可能な検索エンジン: {available_engines}")
+
+# 検索クエリ
+query = "人工知能 最新技術"
+
+# デフォルトエンジン（Google）で検索
+google_results = web_search.search(query)
+# 結果の処理
+web_search.process_results(google_results)
+
+# Bingで検索（追加パラメータを指定）
+bing_results = web_search.search(query, engine="bing", count=4, mkt="ja-JP")
+# 結果の標準化された形式での取得
+bing_standardized = web_search.process_results(bing_results, engine="bing")
+
+# DuckDuckGoで検索
+ddg_results = web_search.search(query, engine="duckduckgo", max_results=4)
+# 結果の標準化された形式での取得
+ddg_standardized = web_search.process_results(ddg_results, engine="duckduckgo")
+```
+
+サンプルスクリプトを実行するには：
+```bash
+python examples/src/example_usage.py
+```
+
+### 個別APIの使用例
+各APIを個別に使用する例も提供しています：
+
+#### Google Custom Search API の例
   ```bash
   python examples/google_example.py
   ```
 サンプルスクリプト内では、環境変数からAPIキーと検索エンジンIDを読み込み、指定したキーワードで検索結果を取得し、結果を表示します。
 
-### Bing Web Search API の例
+#### Bing Web Search API の例
   ```bash
   python examples/bing_example.py
   ```
-### DuckDuckGo Instant Answer API の例
+#### DuckDuckGo Instant Answer API の例
   ```bash
   python examples/duckduckgo_example.py
   ```

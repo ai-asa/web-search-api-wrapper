@@ -1,3 +1,4 @@
+# %%
 from duckduckgo_search import DDGS
 
 class DuckDuckGoInstantAnswer:
@@ -36,9 +37,10 @@ class DuckDuckGoInstantAnswer:
                 max_results=max_results
             ))
         
-        # デバッグ用に結果全体を表示
-        print("Debug - API Response:")
-        for result in results:
-            print(result)
-        
         return results
+    
+if __name__ == "__main__":
+    ddg = DuckDuckGoInstantAnswer()
+    print(ddg.search("NYダウ　平均株価"))
+
+# %%
