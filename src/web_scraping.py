@@ -7,9 +7,44 @@ from urllib.parse import urlparse, urljoin
 import json
 from datetime import datetime
 import os
-from .rate_limit import RateLimiter
+from .rate_limiter import RateLimiter
 
 class WebScraper:
+    # クラス変数としてリストを定義
+    UNWANTED_TAGS = ['script', 'style', 'meta', 'link', 'noscript']
+    EMPTY_TAGS = ['div', 'span']
+    TECHNICAL_CONTENT_PATTERNS = [
+        'function', 'var ', 'const ', 'let ', '=>', 
+        '{', '}', 'window.', 'document.',
+        '<script', '<style', '@media', 
+        'gtag', 'dataLayer', 'hbspt', 'hsVars'
+    ]
+    HEADING_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+    PARAGRAPH_TAGS = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol']
+    CONTENT_TAGS = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li']
+    EMPTY_HEADING_MARKERS = ["#", "##", "###", "####", "#####", "######"]
+    
+    # 正規表現パターンを事前コンパイル（すべてクラス変数として定義）
+    URL_PATH_PATTERN = re.compile(r'^https?://|^/[a-zA-Z0-9/]')
+    SYMBOL_SEMICOLON_PATTERN = re.compile(r'^[^\w\s].*?[^\w\s]$')
+    CONSECUTIVE_NEWLINES_PATTERN = re.compile(r'\n{3,}')
+    INDENT_PATTERN = re.compile(r'^(\s*)')
+    CONSECUTIVE_SPACES_PATTERN = re.compile(r' {4,}')
+    HEADING_ONLY_PATTERN = re.compile(r'^#{1,6}\s*$')
+    HEADING_START_PATTERN = re.compile(r'^#{1,6}')
+    INVALID_FILENAME_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\s]')
+    
+    # 文字化け検出用パターンもクラス変数として定義
+    GARBLED_PATTERNS = [
+        re.compile(r'[\uFFFD\uFFFE\uFFFF]'),  # 無効なUnicode文字
+        re.compile(r'[\u0000-\u001F\u007F-\u009F]'),  # 制御文字
+        re.compile(r'[\uD800-\uDFFF]'),  # サロゲートペア
+        re.compile(r'ã[\\x80-\\xFF]+'),  # 典型的な日本語文字化けパターン
+        re.compile(r'&#[0-9]+;'),  # 数値文字参照
+        re.compile(r'%[0-9A-Fa-f]{2}'),  # URLエンコード
+    ]
+    JAPANESE_CHARS_PATTERN = re.compile(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]')
+    
     def __init__(self, verify_ssl=True):
         """
         WebScraperクラスの初期化
@@ -23,6 +58,58 @@ class WebScraper:
         self.exclude_symbol_semicolon = False  # 記号で始まり;で終わる要素を除外
         self.exclude_garbled = False  # 文字化けした要素を除外
         self.rate_limiter = RateLimiter(default_delay=0.1)  # レート制限を追加
+        self.session = requests.Session()
+
+    def scrape_url(self, url: str, exclude_links: bool = False, 
+                  exclude_symbol_semicolon: bool = True,
+                  exclude_garbled: bool = True,
+                  max_depth: int = 10) -> Optional[Dict[str, Any]]:
+        """
+        URLからHTMLを取得し、各形式のデータを返します。
+
+        Args:
+            url (str): スクレイピング対象のURL
+            exclude_links (bool): リンクテキストを除外するかどうか
+            exclude_symbol_semicolon (bool): 記号で始まり;で終わる要素を除外するかどうか
+            exclude_garbled (bool): 文字化けした要素を除外するかどうか
+            max_depth (int): HTMLの解析を行う最大の深さ
+            
+        Returns:
+            Optional[Dict[str, Any]]: 以下の情報を含む辞書
+                - raw_html: 取得した生のHTMLデータ
+                - json_data: HTMLをJSON形式に変換したデータ
+                - markdown_data: JSONをMarkdown形式に変換したデータ
+                失敗時はNone
+        """
+        # 一時的に除外オプションの値を保存
+        original_exclude_links = self.exclude_links
+        original_exclude_symbol_semicolon = self.exclude_symbol_semicolon
+        original_exclude_garbled = self.exclude_garbled
+        
+        self.exclude_links = exclude_links
+        self.exclude_symbol_semicolon = exclude_symbol_semicolon
+        self.exclude_garbled = exclude_garbled
+
+        try:
+            raw_html = self.fetch_html(url)
+            if raw_html is None:
+                return None
+                
+            # HTMLをJSONに変換（max_depthを渡す）
+            json_data = self.html_to_json(raw_html, max_depth=max_depth)
+            # JSONをMarkdownに変換
+            markdown_data = self.json_to_markdown(json_data)
+            
+            return {
+                "raw_html": raw_html,
+                "json_data": json_data,
+                "markdown_data": markdown_data
+            }
+        finally:
+            # 元の値に戻す
+            self.exclude_links = original_exclude_links
+            self.exclude_symbol_semicolon = original_exclude_symbol_semicolon
+            self.exclude_garbled = original_exclude_garbled
 
     def fetch_html(self, url: str) -> Optional[str]:
         """
@@ -62,12 +149,13 @@ class WebScraper:
             self.logger.error(f"HTMLの取得に失敗しました: {str(e)}")
             return None
 
-    def html_to_json(self, html: str) -> Dict[str, Any]:
+    def html_to_json(self, html: str, max_depth: int = 10) -> Dict[str, Any]:
         """
         HTMLをJSON形式に変換します。
         
         Args:
             html (str): 変換対象のHTML文字列
+            max_depth (int): HTMLの解析を行う最大の深さ
             
         Returns:
             Dict[str, Any]: JSON形式に変換されたHTML構造
@@ -80,8 +168,8 @@ class WebScraper:
         # html要素を取得
         html_element = soup.find('html')
         if html_element:
-            return self._parse_node(html_element)
-        return self._parse_node(soup)
+            return self._parse_node(html_element, max_depth=max_depth)
+        return self._parse_node(soup, max_depth=max_depth)
 
     def _remove_unwanted_elements(self, soup: BeautifulSoup) -> None:
         """
@@ -91,7 +179,7 @@ class WebScraper:
             soup (BeautifulSoup): 処理対象のBeautifulSoupオブジェクト
         """
         # script, style, meta, link タグを削除
-        for tag in soup.find_all(['script', 'style', 'meta', 'link', 'noscript']):
+        for tag in soup.find_all(self.UNWANTED_TAGS):
             tag.decompose()
             
         # コメントを削除
@@ -103,13 +191,13 @@ class WebScraper:
             tag.decompose()
             
         # 空のdiv, span要素を削除
-        for tag in soup.find_all(['div', 'span']):
+        for tag in soup.find_all(self.EMPTY_TAGS):
             if not tag.get_text(strip=True):
                 tag.decompose()
                 
         # データ属性を含む要素を削除
         for tag in soup.find_all(lambda tag: any(attr.startswith('data-') for attr in tag.attrs)):
-            if not any(child.name in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li'] for child in tag.find_all()):
+            if not any(child.name in self.CONTENT_TAGS for child in tag.find_all()):
                 tag.decompose()
                 
         # インラインスタイルを削除
@@ -131,21 +219,12 @@ class WebScraper:
             if any(ord(c) < 32 and c not in '\n\t\r' for c in text):
                 return True
 
-            # 2. 文字化けパターンのチェック
-            garbled_patterns = [
-                r'[\uFFFD\uFFFE\uFFFF]',  # 無効なUnicode文字
-                r'[\u0000-\u001F\u007F-\u009F]',  # 制御文字
-                r'[\uD800-\uDFFF]',  # サロゲートペア
-                r'ã[\\x80-\\xFF]+',  # 典型的な日本語文字化けパターン
-                r'&#[0-9]+;',  # 数値文字参照
-                r'%[0-9A-Fa-f]{2}',  # URLエンコード
-            ]
-            
-            if any(re.search(pattern, text) for pattern in garbled_patterns):
+            # 2. 文字化けパターンのチェック - コンパイル済みパターンを使用
+            if any(pattern.search(text) for pattern in self.GARBLED_PATTERNS):
                 return True
 
-            # 3. 日本語として不自然な文字列パターンのチェック
-            japanese_chars = len(re.findall(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text))
+            # 3. 日本語として不自然な文字列パターンのチェック - コンパイル済みパターンを使用
+            japanese_chars = len(self.JAPANESE_CHARS_PATTERN.findall(text))
             total_chars = len(text)
             
             if total_chars > 0 and japanese_chars > 0:
@@ -157,17 +236,23 @@ class WebScraper:
         except UnicodeError:
             return True
 
-    def _parse_node(self, node: Any) -> Union[Dict[str, Any], str]:
+    def _parse_node(self, node: Any, current_depth: int = 0, max_depth: int = 10) -> Union[Dict[str, Any], str, None]:
         """
         HTMLノードを再帰的にパースしてJSON形式に変換します。
-        不要な要素は除外します。
+        不要な要素は除外します。最大深度を超えた要素は削除されます。
         
         Args:
             node: パース対象のノード
+            current_depth (int): 現在の再帰の深さ
+            max_depth (int): 最大再帰深度
             
         Returns:
-            Union[Dict[str, Any], str]: パースされたノードの構造
+            Union[Dict[str, Any], str, None]: パースされたノードの構造、または深度超過時はNone
         """
+        # 最大深度に達した場合、Noneを返して要素を削除
+        if current_depth >= max_depth:
+            return None
+
         # テキストノードの場合
         if isinstance(node, NavigableString):
             if isinstance(node, Comment):
@@ -176,20 +261,15 @@ class WebScraper:
             text = str(node).strip()
             
             # 技術的なコンテンツを含む文字列を除外
-            if any(pattern in text.lower() for pattern in [
-                'function', 'var ', 'const ', 'let ', '=>', 
-                '{', '}', 'window.', 'document.',
-                '<script', '<style', '@media', 
-                'gtag', 'dataLayer', 'hbspt', 'hsVars'
-            ]):
+            if any(pattern in text.lower() for pattern in self.TECHNICAL_CONTENT_PATTERNS):
                 return ""
-            
+                
             # URLやパスのみの文字列を除外
-            if re.match(r'^https?://|^/[a-zA-Z0-9/]', text):
+            if self.URL_PATH_PATTERN.match(text):
                 return ""
                 
             # 記号で始まり記号で終わる要素を除外
-            if self.exclude_symbol_semicolon and re.match(r'^[^\w\s].*?[^\w\s]$', text):
+            if self.exclude_symbol_semicolon and self.SYMBOL_SEMICOLON_PATTERN.match(text):
                 return ""
                 
             # 文字化けした要素を除外
@@ -204,7 +284,7 @@ class WebScraper:
             return ""
             
         # 不要なタグの場合はスキップ
-        if node.name in ["script", "style", "meta", "link", "noscript"]:
+        if node.name in self.UNWANTED_TAGS:
             return ""
 
         attrs = dict(node.attrs) if node.attrs else {}
@@ -218,9 +298,9 @@ class WebScraper:
             "children": []
         }
 
-        # 子ノードを再帰的にパース
+        # 子ノードを再帰的にパース（深度を増加させて）
         for child in node.children:
-            child_result = self._parse_node(child)
+            child_result = self._parse_node(child, current_depth + 1, max_depth)
             if child_result:  # 空文字列や None の場合は追加しない
                 if isinstance(child_result, str) and child_result.strip():
                     result["children"].append(child_result.strip())
@@ -232,55 +312,6 @@ class WebScraper:
             return None
 
         return result
-
-    def scrape_url(self, url: str, exclude_links: bool = False, 
-                  exclude_symbol_semicolon: bool = True,
-                  exclude_garbled: bool = True) -> Optional[Dict[str, Any]]:
-        """
-        URLからHTMLを取得し、各形式のデータを返します。
-
-        Args:
-            url (str): スクレイピング対象のURL
-            exclude_links (bool): リンクテキストを除外するかどうか
-            exclude_symbol_semicolon (bool): 記号で始まり;で終わる要素を除外するかどうか
-            exclude_garbled (bool): 文字化けした要素を除外するかどうか
-            
-        Returns:
-            Optional[Dict[str, Any]]: 以下の情報を含む辞書
-                - raw_html: 取得した生のHTMLデータ
-                - json_data: HTMLをJSON形式に変換したデータ
-                - markdown_data: JSONをMarkdown形式に変換したデータ
-                失敗時はNone
-        """
-        # 一時的に除外オプションの値を保存
-        original_exclude_links = self.exclude_links
-        original_exclude_symbol_semicolon = self.exclude_symbol_semicolon
-        original_exclude_garbled = self.exclude_garbled
-        
-        self.exclude_links = exclude_links
-        self.exclude_symbol_semicolon = exclude_symbol_semicolon
-        self.exclude_garbled = exclude_garbled
-
-        try:
-            raw_html = self.fetch_html(url)
-            if raw_html is None:
-                return None
-                
-            # HTMLをJSONに変換
-            json_data = self.html_to_json(raw_html)
-            # JSONをMarkdownに変換
-            markdown_data = self.json_to_markdown(json_data)
-            
-            return {
-                "raw_html": raw_html,
-                "json_data": json_data,
-                "markdown_data": markdown_data
-            }
-        finally:
-            # 元の値に戻す
-            self.exclude_links = original_exclude_links
-            self.exclude_symbol_semicolon = original_exclude_symbol_semicolon
-            self.exclude_garbled = original_exclude_garbled
 
     def json_to_markdown(self, json_data: Dict[str, Any], level: int = 0) -> str:
         """
@@ -382,13 +413,13 @@ class WebScraper:
             markdown = "  " * level + markdown
 
         # 段落やヘッダーの後に空行を追加
-        if tag in ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol"]:
+        if tag in self.PARAGRAPH_TAGS:
             markdown += "\n"
 
         # 見出しの場合、内容が空でないことを確認
-        if tag in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+        if tag in self.HEADING_TAGS:
             content = "".join(result).strip()
-            if not content or content in ["#", "##", "###", "####", "#####", "######"]:
+            if not content or content in self.EMPTY_HEADING_MARKERS:
                 return ""
 
         return markdown
@@ -404,7 +435,7 @@ class WebScraper:
             str: 整形されたMarkdownテキスト
         """
         # 連続する改行を1つの改行に置換
-        markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+        markdown = self.CONSECUTIVE_NEWLINES_PATTERN.sub('\n\n', markdown)
         
         # 行ごとに処理
         lines = markdown.split('\n')
@@ -413,7 +444,7 @@ class WebScraper:
         for i, line in enumerate(lines):
             # 連続する空白を4つまでに制限
             # 行頭のインデントは保持
-            indent_match = re.match(r'^(\s*)', line)
+            indent_match = self.INDENT_PATTERN.match(line)
             indent = indent_match.group(1) if indent_match else ''
             content = line[len(indent):]
             
@@ -422,7 +453,7 @@ class WebScraper:
                 indent = indent[:4]
                 
             # 行の内容の連続空白を4つまでに制限
-            content = re.sub(r' {4,}', '    ', content)
+            content = self.CONSECUTIVE_SPACES_PATTERN.sub('    ', content)
             line = indent + content
             
             # 空白のみの行をスキップ
@@ -439,7 +470,7 @@ class WebScraper:
                 continue
                 
             # 見出し行の場合
-            if re.match(r'^#{1,6}\s*$', line.strip()):
+            if self.HEADING_ONLY_PATTERN.match(line.strip()):
                 # 次の非空行までチェック
                 next_non_empty = None
                 for next_line in lines[i+1:]:
@@ -448,7 +479,7 @@ class WebScraper:
                         break
                 
                 # 次の非空行が見出しの場合、現在の見出しをスキップ
-                if next_non_empty and re.match(r'^#{1,6}', next_non_empty.strip()):
+                if next_non_empty and self.HEADING_START_PATTERN.match(next_non_empty.strip()):
                     continue
             
             cleaned_lines.append(line)
@@ -465,7 +496,8 @@ class WebScraper:
         output_dir: str = "scraped_data",
         save_json: bool = True,
         save_markdown: bool = True,
-        exclude_links: bool = False
+        exclude_links: bool = False,
+        max_depth: int = 20
     ) -> Dict[str, Dict[str, Union[Dict[str, Any], str, None]]]:
         """
         複数のURLをスクレイピングし、結果を保存します。
@@ -476,7 +508,7 @@ class WebScraper:
             save_json (bool): JSONとして保存するかどうか
             save_markdown (bool): Markdownとして保存するかどうか
             exclude_links (bool): リンクテキストを除外するかどうか
-
+            max_depth (int): HTMLの解析を行う最大の深さ
         Returns:
             Dict[str, Dict[str, Union[Dict[str, Any], str, None]]]: 
                 URLをキーとし、以下の情報を含む辞書:
@@ -493,7 +525,7 @@ class WebScraper:
 
         for url in urls:
             self.logger.info(f"スクレイピング開始: {url}")
-            result = self.scrape_url(url, exclude_links)
+            result = self.scrape_url(url, exclude_links, max_depth=max_depth)
             
             if result:
                 # ファイルに保存
@@ -554,7 +586,7 @@ class WebScraper:
             safe_name = domain
             
         # 不正な文字を除去
-        safe_name = re.sub(r'[<>:"/\\|?*\s]', '_', safe_name)
+        safe_name = self.INVALID_FILENAME_CHARS_PATTERN.sub('_', safe_name)
         # 長すぎるファイル名を防ぐ
         if len(safe_name) > 100:
             safe_name = safe_name[:100]

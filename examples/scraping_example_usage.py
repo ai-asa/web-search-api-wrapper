@@ -36,7 +36,8 @@ def main():
         output_dir="scraped_data",
         save_json=save_json,
         save_markdown=save_markdown,
-        exclude_links=exclude_links
+        exclude_links=exclude_links,
+        max_depth=20
     )
     
     # 結果の表示と利用
