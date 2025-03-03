@@ -7,13 +7,22 @@ from urllib.parse import urlparse, urljoin
 import json
 from datetime import datetime
 import os
+from .rate_limit import RateLimiter
 
 class WebScraper:
-    def __init__(self):
+    def __init__(self, verify_ssl=True):
+        """
+        WebScraperクラスの初期化
+        
+        Args:
+            verify_ssl (bool): SSLの検証を行うかどうか。デフォルトはTrue
+        """
+        self.verify_ssl = verify_ssl
         self.logger = logging.getLogger(__name__)
         self.exclude_links = False
         self.exclude_symbol_semicolon = False  # 記号で始まり;で終わる要素を除外
         self.exclude_garbled = False  # 文字化けした要素を除外
+        self.rate_limiter = RateLimiter(default_delay=0.1)  # レート制限を追加
 
     def fetch_html(self, url: str) -> Optional[str]:
         """
@@ -26,19 +35,26 @@ class WebScraper:
             Optional[str]: 取得したHTML。エラーの場合はNone
         """
         try:
-            response = requests.get(url)
+            # リクエスト前に待機時間を確保
+            self.rate_limiter.wait_if_needed(url)
+            
+            response = requests.get(url, verify=self.verify_ssl)
             response.raise_for_status()
             
-            # エンコーディングの自動判定と明示的な設定
-            if response.encoding.lower() == 'iso-8859-1':
-                # Content-Typeヘッダーからエンコーディングを取得
-                content_type = response.headers.get('content-type', '').lower()
-                if 'charset=' in content_type:
-                    encoding = content_type.split('charset=')[-1]
-                else:
-                    # Content-Typeにcharsetが指定されていない場合はページ内のmetaタグを確認
-                    encoding = response.apparent_encoding
-                
+            # エンコーディングの処理
+            encoding = None
+            
+            # Content-Typeヘッダーからエンコーディングを取得
+            content_type = response.headers.get('content-type', '').lower()
+            if 'charset=' in content_type:
+                encoding = content_type.split('charset=')[-1]
+            
+            # レスポンスのエンコーディングがISO-8859-1の場合、または未設定の場合
+            if not encoding or response.encoding.lower() == 'iso-8859-1':
+                # apparent_encodingを使用してエンコーディングを推測
+                encoding = response.apparent_encoding
+            
+            if encoding:
                 response.encoding = encoding
             
             return response.text

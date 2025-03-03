@@ -59,7 +59,7 @@ def main(query, max_results=10, custom_search_engine_id=GOOGLE_CSE_ID):
 
 if __name__ == "__main__":
     # 検索クエリ
-    query = "SBI生命の終身医療保険Neo"
+    query = "明治安田生命 医療保険 特徴 メリット"
     # カスタム検索エンジンIDを指定する場合は以下のようにします
     # main(query, max_results=10, custom_search_engine_id="your_custom_id")
     main(query, max_results=10)
