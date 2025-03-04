@@ -8,9 +8,10 @@ import json
 from datetime import datetime
 import os
 from .rate_limiter import RateLimiter
-import asyncio
-import aiohttp
+# import asyncio
+# import aiohttp
 import chardet
+import time
 
 class WebScraper:
     # クラス変数としてリストを定義
@@ -61,7 +62,19 @@ class WebScraper:
         self.exclude_symbol_semicolon = False  # 記号で始まり;で終わる要素を除外
         self.exclude_garbled = False  # 文字化けした要素を除外
         self.rate_limiter = RateLimiter(default_delay=0.1)  # レート制限を追加
+        
+        # セッションの初期化と共通ヘッダーの設定
         self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3',
+        })
+        
+        # リクエストの設定
+        self.request_timeout = 30  # タイムアウト（秒）
+        self.max_retries = 3      # 最大リトライ回数
+        self.retry_delay = 0.5     # リトライ間隔（秒）
 
     def scrape_url(self, url: str, exclude_links: bool = False, 
                   exclude_symbol_semicolon: bool = True,
@@ -114,59 +127,59 @@ class WebScraper:
             self.exclude_symbol_semicolon = original_exclude_symbol_semicolon
             self.exclude_garbled = original_exclude_garbled
 
-    async def scrape_url_async(self, url: str, exclude_links: bool = False, 
-                  exclude_symbol_semicolon: bool = True,
-                  exclude_garbled: bool = True,
-                  max_depth: int = 10) -> Optional[Dict[str, Any]]:
-        """
-        URLからHTMLを非同期で取得し、各形式のデータを返します。
+    # async def scrape_url_async(self, url: str, exclude_links: bool = False, 
+    #               exclude_symbol_semicolon: bool = True,
+    #               exclude_garbled: bool = True,
+    #               max_depth: int = 10) -> Optional[Dict[str, Any]]:
+    #     """
+    #     URLからHTMLを非同期で取得し、各形式のデータを返します。
 
-        Args:
-            url (str): スクレイピング対象のURL
-            exclude_links (bool): リンクテキストを除外するかどうか
-            exclude_symbol_semicolon (bool): 記号で始まり;で終わる要素を除外するかどうか
-            exclude_garbled (bool): 文字化けした要素を除外するかどうか
-            max_depth (int): HTMLの解析を行う最大の深さ
+    #     Args:
+    #         url (str): スクレイピング対象のURL
+    #         exclude_links (bool): リンクテキストを除外するかどうか
+    #         exclude_symbol_semicolon (bool): 記号で始まり;で終わる要素を除外するかどうか
+    #         exclude_garbled (bool): 文字化けした要素を除外するかどうか
+    #         max_depth (int): HTMLの解析を行う最大の深さ
             
-        Returns:
-            Optional[Dict[str, Any]]: 以下の情報を含む辞書
-                - raw_html: 取得した生のHTMLデータ
-                - json_data: HTMLをJSON形式に変換したデータ
-                - markdown_data: JSONをMarkdown形式に変換したデータ
-                失敗時はNone
-        """
-        # 一時的に除外オプションの値を保存
-        original_exclude_links = self.exclude_links
-        original_exclude_symbol_semicolon = self.exclude_symbol_semicolon
-        original_exclude_garbled = self.exclude_garbled
+    #     Returns:
+    #         Optional[Dict[str, Any]]: 以下の情報を含む辞書
+    #             - raw_html: 取得した生のHTMLデータ
+    #             - json_data: HTMLをJSON形式に変換したデータ
+    #             - markdown_data: JSONをMarkdown形式に変換したデータ
+    #             失敗時はNone
+    #     """
+    #     # 一時的に除外オプションの値を保存
+    #     original_exclude_links = self.exclude_links
+    #     original_exclude_symbol_semicolon = self.exclude_symbol_semicolon
+    #     original_exclude_garbled = self.exclude_garbled
         
-        self.exclude_links = exclude_links
-        self.exclude_symbol_semicolon = exclude_symbol_semicolon
-        self.exclude_garbled = exclude_garbled
+    #     self.exclude_links = exclude_links
+    #     self.exclude_symbol_semicolon = exclude_symbol_semicolon
+    #     self.exclude_garbled = exclude_garbled
 
-        try:
-            raw_html = await self.fetch_html_async(url)
-            if raw_html is None:
-                return None
+    #     try:
+    #         raw_html = await self.fetch_html_async(url)
+    #         if raw_html is None:
+    #             return None
                 
-            # HTMLをJSONに変換（max_depthを渡す）
-            json_data = self.html_to_json(raw_html, max_depth=max_depth)
-            # JSONをMarkdownに変換
-            markdown_data = self.json_to_markdown(json_data)
+    #         # HTMLをJSONに変換（max_depthを渡す）
+    #         json_data = self.html_to_json(raw_html, max_depth=max_depth)
+    #         # JSONをMarkdownに変換
+    #         markdown_data = self.json_to_markdown(json_data)
             
-            return {
-                "raw_html": raw_html,
-                "json_data": json_data,
-                "markdown_data": markdown_data
-            }
-        except Exception as e:
-            self.logger.error(f"スクレイピング処理中にエラーが発生しました: {str(e)}")
-            return None
-        finally:
-            # 元の設定に戻す
-            self.exclude_links = original_exclude_links
-            self.exclude_symbol_semicolon = original_exclude_symbol_semicolon
-            self.exclude_garbled = original_exclude_garbled
+    #         return {
+    #             "raw_html": raw_html,
+    #             "json_data": json_data,
+    #             "markdown_data": markdown_data
+    #         }
+    #     except Exception as e:
+    #         self.logger.error(f"スクレイピング処理中にエラーが発生しました: {str(e)}")
+    #         return None
+    #     finally:
+    #         # 元の設定に戻す
+    #         self.exclude_links = original_exclude_links
+    #         self.exclude_symbol_semicolon = original_exclude_symbol_semicolon
+    #         self.exclude_garbled = original_exclude_garbled
 
     def fetch_html(self, url: str) -> Optional[str]:
         """
@@ -178,74 +191,105 @@ class WebScraper:
         Returns:
             Optional[str]: 取得したHTML。エラーの場合はNone
         """
-        try:
-            # リクエスト前に待機時間を確保
-            self.rate_limiter.wait_if_needed(url)
-            
-            response = requests.get(url, verify=self.verify_ssl)
-            response.raise_for_status()
-            
-            # エンコーディングの処理
-            encoding = None
-            
-            # Content-Typeヘッダーからエンコーディングを取得
-            content_type = response.headers.get('content-type', '').lower()
-            if 'charset=' in content_type:
-                encoding = content_type.split('charset=')[-1]
-            
-            # レスポンスのエンコーディングがISO-8859-1の場合、または未設定の場合
-            if not encoding or response.encoding.lower() == 'iso-8859-1':
-                # apparent_encodingを使用してエンコーディングを推測
-                encoding = response.apparent_encoding
-            
-            if encoding:
-                response.encoding = encoding
-            
-            return response.text
-        except requests.RequestException as e:
-            self.logger.error(f"HTMLの取得に失敗しました: {str(e)}")
-            return None
+        retries = 0
+        while retries < self.max_retries:
+            try:
+                # リクエスト前に待機時間を確保
+                self.rate_limiter.wait_if_needed(url)
+                
+                response = self.session.get(
+                    url,
+                    verify=self.verify_ssl,
+                    timeout=self.request_timeout
+                )
+                response.raise_for_status()
+                
+                # エンコーディングの処理
+                encoding = None
+                
+                # Content-Typeヘッダーからエンコーディングを取得
+                content_type = response.headers.get('content-type', '').lower()
+                if 'charset=' in content_type:
+                    encoding = content_type.split('charset=')[-1]
+                
+                # レスポンスのエンコーディングがISO-8859-1の場合、または未設定の場合
+                if not encoding or response.encoding.lower() == 'iso-8859-1':
+                    # chardetを使用してエンコーディングを推測
+                    raw_content = response.content
+                    encoding_result = chardet.detect(raw_content)
+                    if encoding_result and encoding_result['encoding']:
+                        encoding = encoding_result['encoding']
+                
+                if encoding:
+                    response.encoding = encoding
+                
+                return response.text
+                
+            except requests.RequestException as e:
+                retries += 1
+                if retries < self.max_retries:
+                    self.logger.warning(f"リトライ {retries}/{self.max_retries}: {str(e)}")
+                    time.sleep(self.retry_delay)
+                else:
+                    self.logger.error(f"HTMLの取得に失敗しました: {str(e)}")
+                    return None
 
-    async def fetch_html_async(self, url: str) -> Optional[str]:
-        """
-        指定されたURLからHTMLを非同期で取得します。
+    # async def fetch_html_async(self, url: str) -> Optional[str]:
+    #     """
+    #     指定されたURLからHTMLを非同期で取得します。
         
-        Args:
-            url (str): スクレイピング対象のURL
+    #     Args:
+    #         url (str): スクレイピング対象のURL
             
-        Returns:
-            Optional[str]: 取得したHTML。エラーの場合はNone
-        """
-        try:
-            # リクエスト前に待機時間を確保
-            await self.rate_limiter.wait_if_needed_async(url)
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, ssl=None if not self.verify_ssl else True) as response:
-                    response.raise_for_status()
-                    
-                    # エンコーディングの処理
-                    encoding = None
-                    
-                    # Content-Typeヘッダーからエンコーディングを取得
-                    content_type = response.headers.get('content-type', '').lower()
-                    if 'charset=' in content_type:
-                        encoding = content_type.split('charset=')[-1]
-                    
-                    # エンコーディングが未設定の場合
-                    if not encoding:
-                        # テキストを取得してエンコーディングを推測
-                        text = await response.text('iso-8859-1')
-                        encoding_result = chardet.detect(text.encode('iso-8859-1'))
-                        if encoding_result and encoding_result['encoding']:
-                            encoding = encoding_result['encoding']
-                            return text.encode('iso-8859-1').decode(encoding, errors='replace')
-                        return text
-                    
-                    return await response.text(encoding=encoding, errors='replace')
-        except Exception as e:
-            self.logger.error(f"HTMLの非同期取得に失敗しました: {str(e)}")
-            return None
+    #     Returns:
+    #         Optional[str]: 取得したHTML。エラーの場合はNone
+    #     """
+    #     retries = 0
+    #     while retries < self.max_retries:
+    #         try:
+    #             # リクエスト前に待機時間を確保
+    #             await self.rate_limiter.wait_if_needed_async(url)
+                
+    #             async with aiohttp.ClientSession(headers={
+    #                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    #                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    #                 'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3',
+    #             }) as session:
+    #                 async with session.get(
+    #                     url,
+    #                     ssl=None if not self.verify_ssl else True,
+    #                     timeout=aiohttp.ClientTimeout(total=self.request_timeout)
+    #                 ) as response:
+    #                     response.raise_for_status()
+                        
+    #                     # エンコーディングの処理
+    #                     encoding = None
+                        
+    #                     # Content-Typeヘッダーからエンコーディングを取得
+    #                     content_type = response.headers.get('content-type', '').lower()
+    #                     if 'charset=' in content_type:
+    #                         encoding = content_type.split('charset=')[-1]
+                        
+    #                     # エンコーディングが未設定の場合
+    #                     if not encoding:
+    #                         # テキストを取得してエンコーディングを推測
+    #                         text = await response.text('iso-8859-1')
+    #                         encoding_result = chardet.detect(text.encode('iso-8859-1'))
+    #                         if encoding_result and encoding_result['encoding']:
+    #                             encoding = encoding_result['encoding']
+    #                             return text.encode('iso-8859-1').decode(encoding, errors='replace')
+    #                         return text
+                        
+    #                     return await response.text(encoding=encoding, errors='replace')
+                        
+    #         except Exception as e:
+    #             retries += 1
+    #             if retries < self.max_retries:
+    #                 self.logger.warning(f"非同期リトライ {retries}/{self.max_retries}: {str(e)}")
+    #                 await asyncio.sleep(self.retry_delay)
+    #             else:
+    #                 self.logger.error(f"HTMLの非同期取得に失敗しました: {str(e)}")
+                    return None
 
     def html_to_json(self, html: str, max_depth: int = 10) -> Dict[str, Any]:
         """
@@ -652,86 +696,86 @@ class WebScraper:
 
         return results
 
-    async def scrape_multiple_urls_async(
-        self,
-        urls: List[str],
-        output_dir: str = "scraped_data",
-        save_json: bool = True,
-        save_markdown: bool = True,
-        exclude_links: bool = False,
-        max_depth: int = 20
-    ) -> Dict[str, Dict[str, Union[Dict[str, Any], str, None]]]:
-        """
-        複数のURLを非同期でスクレイピングし、結果を保存します。
+    # async def scrape_multiple_urls_async(
+    #     self,
+    #     urls: List[str],
+    #     output_dir: str = "scraped_data",
+    #     save_json: bool = True,
+    #     save_markdown: bool = True,
+    #     exclude_links: bool = False,
+    #     max_depth: int = 20
+    # ) -> Dict[str, Dict[str, Union[Dict[str, Any], str, None]]]:
+    #     """
+    #     複数のURLを非同期でスクレイピングし、結果を保存します。
 
-        Args:
-            urls (List[str]): スクレイピング対象のURLリスト
-            output_dir (str): 保存先ディレクトリ
-            save_json (bool): JSONとして保存するかどうか
-            save_markdown (bool): Markdownとして保存するかどうか
-            exclude_links (bool): リンクテキストを除外するかどうか
-            max_depth (int): HTMLの解析を行う最大の深さ
-        Returns:
-            Dict[str, Dict[str, Union[Dict[str, Any], str, None]]]: 
-                URLをキーとし、以下の情報を含む辞書:
-                - raw_html: 取得した生のHTMLデータ
-                - json_data: スクレイピングしたJSONデータ
-                - markdown_data: 変換したMarkdownデータ
-                - json_file: 保存したJSONファイルのパス（保存した場合）
-                - markdown_file: 保存したMarkdownファイルのパス（保存した場合）
-        """
-        # ファイルを保存する場合のみディレクトリを作成
-        if save_json or save_markdown:
-            os.makedirs(output_dir, exist_ok=True)
-        results = {}
+    #     Args:
+    #         urls (List[str]): スクレイピング対象のURLリスト
+    #         output_dir (str): 保存先ディレクトリ
+    #         save_json (bool): JSONとして保存するかどうか
+    #         save_markdown (bool): Markdownとして保存するかどうか
+    #         exclude_links (bool): リンクテキストを除外するかどうか
+    #         max_depth (int): HTMLの解析を行う最大の深さ
+    #     Returns:
+    #         Dict[str, Dict[str, Union[Dict[str, Any], str, None]]]: 
+    #             URLをキーとし、以下の情報を含む辞書:
+    #             - raw_html: 取得した生のHTMLデータ
+    #             - json_data: スクレイピングしたJSONデータ
+    #             - markdown_data: 変換したMarkdownデータ
+    #             - json_file: 保存したJSONファイルのパス（保存した場合）
+    #             - markdown_file: 保存したMarkdownファイルのパス（保存した場合）
+    #     """
+    #     # ファイルを保存する場合のみディレクトリを作成
+    #     if save_json or save_markdown:
+    #         os.makedirs(output_dir, exist_ok=True)
+    #     results = {}
 
-        # 元のexclude_links設定を保存
-        original_exclude_links = self.exclude_links
-        # クラス変数にexclude_links設定を適用
-        self.exclude_links = exclude_links
+    #     # 元のexclude_links設定を保存
+    #     original_exclude_links = self.exclude_links
+    #     # クラス変数にexclude_links設定を適用
+    #     self.exclude_links = exclude_links
 
-        try:
-            # 非同期タスクのリストを作成
-            tasks = []
-            for url in urls:
-                self.logger.info(f"非同期スクレイピング開始: {url}")
-                tasks.append(self.scrape_url_async(url, exclude_links=exclude_links, exclude_symbol_semicolon=True, exclude_garbled=True, max_depth=max_depth))
+    #     try:
+    #         # 非同期タスクのリストを作成
+    #         tasks = []
+    #         for url in urls:
+    #             self.logger.info(f"非同期スクレイピング開始: {url}")
+    #             tasks.append(self.scrape_url_async(url, exclude_links=exclude_links, exclude_symbol_semicolon=True, exclude_garbled=True, max_depth=max_depth))
             
-            # すべてのタスクを並行実行
-            scraped_results = await asyncio.gather(*tasks)
+    #         # すべてのタスクを並行実行
+    #         scraped_results = await asyncio.gather(*tasks)
             
-            # 結果を処理
-            for i, url in enumerate(urls):
-                result = scraped_results[i]
-                if result:
-                    # ファイルに保存
-                    json_file, md_file = await self.save_results_async(
-                        result["json_data"],
-                        url,
-                        output_dir,
-                        save_json=save_json,
-                        save_markdown=save_markdown
-                    )
+    #         # 結果を処理
+    #         for i, url in enumerate(urls):
+    #             result = scraped_results[i]
+    #             if result:
+    #                 # ファイルに保存
+    #                 json_file, md_file = await self.save_results_async(
+    #                     result["json_data"],
+    #                     url,
+    #                     output_dir,
+    #                     save_json=save_json,
+    #                     save_markdown=save_markdown
+    #                 )
                     
-                    results[url] = {
-                        **result,
-                        "json_file": json_file,
-                        "markdown_file": md_file
-                    }
-                else:
-                    self.logger.error(f"非同期スクレイピング失敗: {url}")
-                    results[url] = {
-                        "raw_html": None,
-                        "json_data": None,
-                        "markdown_data": None,
-                        "json_file": None,
-                        "markdown_file": None
-                    }
-        finally:
-            # 元の設定に戻す
-            self.exclude_links = original_exclude_links
+    #                 results[url] = {
+    #                     **result,
+    #                     "json_file": json_file,
+    #                     "markdown_file": md_file
+    #                 }
+    #             else:
+    #                 self.logger.error(f"非同期スクレイピング失敗: {url}")
+    #                 results[url] = {
+    #                     "raw_html": None,
+    #                     "json_data": None,
+    #                     "markdown_data": None,
+    #                     "json_file": None,
+    #                     "markdown_file": None
+    #                 }
+    #     finally:
+    #         # 元の設定に戻す
+    #         self.exclude_links = original_exclude_links
 
-        return results
+    #     return results
 
     def save_results(
         self,
@@ -796,80 +840,80 @@ class WebScraper:
 
         return json_filename, md_filename
 
-    async def save_results_async(
-        self,
-        result: dict,
-        url: str,
-        output_dir: str,
-        save_json: bool = True,
-        save_markdown: bool = True
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """
-        スクレイピング結果を非同期でファイルに保存します。
+    # async def save_results_async(
+    #     self,
+    #     result: dict,
+    #     url: str,
+    #     output_dir: str,
+    #     save_json: bool = True,
+    #     save_markdown: bool = True
+    # ) -> Tuple[Optional[str], Optional[str]]:
+    #     """
+    #     スクレイピング結果を非同期でファイルに保存します。
         
-        Args:
-            result (dict): スクレイピング結果のJSONデータ
-            url (str): スクレイピング対象のURL
-            output_dir (str): 保存先ディレクトリ
-            save_json (bool): JSONとして保存するかどうか
-            save_markdown (bool): Markdownとして保存するかどうか
+    #     Args:
+    #         result (dict): スクレイピング結果のJSONデータ
+    #         url (str): スクレイピング対象のURL
+    #         output_dir (str): 保存先ディレクトリ
+    #         save_json (bool): JSONとして保存するかどうか
+    #         save_markdown (bool): Markdownとして保存するかどうか
             
-        Returns:
-            Tuple[Optional[str], Optional[str]]: 保存したJSONファイルとMarkdownファイルのパス
-        """
-        # URLからファイル名を生成
-        domain = urlparse(url).netloc
-        path = urlparse(url).path
+    #     Returns:
+    #         Tuple[Optional[str], Optional[str]]: 保存したJSONファイルとMarkdownファイルのパス
+    #     """
+    #     # URLからファイル名を生成
+    #     domain = urlparse(url).netloc
+    #     path = urlparse(url).path
         
-        # 無効な文字を置換
-        filename_base = f"{domain}{path}".replace("/", "_")
-        filename_base = self.INVALID_FILENAME_CHARS_PATTERN.sub("_", filename_base)
+    #     # 無効な文字を置換
+    #     filename_base = f"{domain}{path}".replace("/", "_")
+    #     filename_base = self.INVALID_FILENAME_CHARS_PATTERN.sub("_", filename_base)
         
-        # ファイル名が長すぎる場合は切り詰める
-        if len(filename_base) > 100:
-            filename_base = filename_base[:100]
+    #     # ファイル名が長すぎる場合は切り詰める
+    #     if len(filename_base) > 100:
+    #         filename_base = filename_base[:100]
         
-        json_file_path = None
-        md_file_path = None
+    #     json_file_path = None
+    #     md_file_path = None
         
-        # JSONファイルの保存
-        if save_json:
-            json_file_path = os.path.join(output_dir, f"{filename_base}.json")
-            try:
-                # 非同期でファイル操作を行うためにループを使用
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._save_json_file(json_file_path, result)
-                )
-                self.logger.info(f"JSONファイルを保存しました: {json_file_path}")
-            except Exception as e:
-                self.logger.error(f"JSONファイルの保存に失敗しました: {str(e)}")
-                json_file_path = None
+    #     # JSONファイルの保存
+    #     if save_json:
+    #         json_file_path = os.path.join(output_dir, f"{filename_base}.json")
+    #         try:
+    #             # 非同期でファイル操作を行うためにループを使用
+    #             loop = asyncio.get_event_loop()
+    #             await loop.run_in_executor(
+    #                 None,
+    #                 lambda: self._save_json_file(json_file_path, result)
+    #             )
+    #             self.logger.info(f"JSONファイルを保存しました: {json_file_path}")
+    #         except Exception as e:
+    #             self.logger.error(f"JSONファイルの保存に失敗しました: {str(e)}")
+    #             json_file_path = None
         
-        # Markdownファイルの保存
-        if save_markdown:
-            md_file_path = os.path.join(output_dir, f"{filename_base}.md")
-            try:
-                # 現在のexclude_links設定を保存
-                original_exclude_links = self.exclude_links
+    #     # Markdownファイルの保存
+    #     if save_markdown:
+    #         md_file_path = os.path.join(output_dir, f"{filename_base}.md")
+    #         try:
+    #             # 現在のexclude_links設定を保存
+    #             original_exclude_links = self.exclude_links
                 
-                # exclude_linksの設定を適用（scrape_url_asyncで設定された値を使用）
-                # Markdownに変換
-                markdown_data = self.json_to_markdown(result)
+    #             # exclude_linksの設定を適用（scrape_url_asyncで設定された値を使用）
+    #             # Markdownに変換
+    #             markdown_data = self.json_to_markdown(result)
                 
-                # 非同期でファイル操作を行うためにループを使用
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._save_markdown_file(md_file_path, markdown_data)
-                )
-                self.logger.info(f"Markdownファイルを保存しました: {md_file_path}")
-            except Exception as e:
-                self.logger.error(f"Markdownファイルの保存に失敗しました: {str(e)}")
-                md_file_path = None
+    #             # 非同期でファイル操作を行うためにループを使用
+    #             loop = asyncio.get_event_loop()
+    #             await loop.run_in_executor(
+    #                 None,
+    #                 lambda: self._save_markdown_file(md_file_path, markdown_data)
+    #             )
+    #             self.logger.info(f"Markdownファイルを保存しました: {md_file_path}")
+    #         except Exception as e:
+    #             self.logger.error(f"Markdownファイルの保存に失敗しました: {str(e)}")
+    #             md_file_path = None
         
-        return json_file_path, md_file_path
+    #     return json_file_path, md_file_path
 
     def _save_json_file(self, file_path: str, data: dict) -> None:
         """JSONファイルを保存するヘルパーメソッド"""

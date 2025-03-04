@@ -189,7 +189,8 @@ class WebSearch:
                 output_dir=scrape_options.get("output_dir", "scraped_data"),
                 save_json=scrape_options.get("save_json", True),
                 save_markdown=scrape_options.get("save_markdown", True),
-                exclude_links=scrape_options.get("exclude_links", False)
+                exclude_links=scrape_options.get("exclude_links", False),
+                max_depth=scrape_options.get("max_depth", 20)
             )
             
             response["scraped_data"] = scraped_data

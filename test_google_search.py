@@ -22,9 +22,10 @@ def main(query, max_results=10, custom_search_engine_id=GOOGLE_CSE_ID):
         # スクレイピングオプションの設定
         scrape_options = {
             "output_dir": "google_results",
-            "save_json": True,
+            "save_json": False,
             "save_markdown": True,
-            "exclude_links": True  # リンクを除外
+            "exclude_links": True,  # リンクを除外
+            "max_depth": 20
         }
         
         # 検索の実行とスクレイピング
@@ -45,14 +46,14 @@ def main(query, max_results=10, custom_search_engine_id=GOOGLE_CSE_ID):
             print(f"   Snippet: {result['snippet']}")
         
         # スクレイピング結果の表示
-        if results["scraped_data"]:
-            print("\nスクレイピング結果:")
-            for url, data in results["scraped_data"].items():
-                print(f"\nURL: {url}")
-                if data["json_data"]:
-                    print(f"JSONデータ: {data['json_data']}")
-                if data["markdown_data"]:
-                    print(f"Markdownデータ: {data['markdown_data']}")
+        # if results["scraped_data"]:
+        #     print("\nスクレイピング結果:")
+        #     for url, data in results["scraped_data"].items():
+        #         print(f"\nURL: {url}")
+        #         if data["json_data"]:
+        #             print(f"JSONデータ: {data['json_data']}")
+        #         if data["markdown_data"]:
+        #             print(f"Markdownデータ: {data['markdown_data']}")
         
     except Exception as e:
         print(f"エラー: {e}")
